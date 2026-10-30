@@ -8,6 +8,8 @@ import { bundleStats } from 'rollup-plugin-bundle-stats';
 
 import pkg from './package.json' with { type: 'json' };
 
+import { newsFeedPlugin } from './playground/news/newsFeedPlugin.ts';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const THEME_CANDIDATES = [
@@ -185,6 +187,7 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     plugins: [
+      newsFeedPlugin(),
       redoclyConfigLiterals,
       packageJsonNameVersion,
       bundledLicenses(baseFileName),

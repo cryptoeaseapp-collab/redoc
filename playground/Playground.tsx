@@ -7,6 +7,8 @@ import type { RawApiDocsOptions } from '../src/types/options.js';
 import './index.css';
 import RedocStandalone from '../src/RedocStandalone.js';
 import { apiSpecType } from '../src/types/common.js';
+import { NewsPage } from './news/NewsPage.js';
+import { NewsSection } from './news/NewsSection.js';
 const BASE_PATH = '/docs';
 
 type SpecEntry = {
@@ -339,6 +341,7 @@ function Playground() {
         </div>
         {loading && <span style={{ opacity: 0.6 }}>Loading...</span>}
       </div>
+      <NewsSection />
       <RedocStandalone
         key={selectedIdx}
         spec={spec.content}
@@ -356,8 +359,9 @@ function Playground() {
   );
 }
 
+/** The playground is a static app: `/news` picks the news page, everything else the docs. */
+const isNewsPage = window.location.pathname.replace(/\/+$/, '') === '/news';
+
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Playground />
-  </StrictMode>,
+  <StrictMode>{isNewsPage ? <NewsPage /> : <Playground />}</StrictMode>,
 );
