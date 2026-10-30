@@ -1,4 +1,4 @@
-import React, { StrictMode, useState, useCallback, useMemo } from 'react';
+import React, { StrictMode, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import type { ApiSpecType } from '../src/types/common.js';
@@ -75,6 +75,7 @@ function getOptions(spec: SpecEntry): RawApiDocsOptions {
 }
 
 const STORAGE_KEY = 'playground-spec-idx';
+const UPLOADS_STORAGE_KEY = 'playground-uploads';
 
 /**
  * `?spec=<url>&type=<specType>` points the playground at any definition the dev server can
@@ -90,12 +91,32 @@ function getUrlSpec(): SpecEntry | undefined {
   return { label: path.split('/').pop() ?? path, path, type };
 }
 
-function getStoredIdx(): number {
+/** Uploaded files survive a reload, so they are kept in local storage, not session storage. */
+function getStoredUploads(): SpecEntry[] {
+  try {
+    const stored = localStorage.getItem(UPLOADS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is SpecEntry =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as SpecEntry).label === 'string' &&
+        typeof (entry as SpecEntry).content === 'string',
+    );
+  } catch {
+    /* unavailable or unreadable storage */
+  }
+  return [];
+}
+
+function getStoredIdx(count: number): number {
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY);
     if (stored !== null) {
       const idx = Number(stored);
-      if (idx >= 0 && idx < SPECS.length) return idx;
+      if (idx >= 0 && idx < count) return idx;
     }
   } catch {
     /* SSR / disabled storage */
@@ -103,17 +124,57 @@ function getStoredIdx(): number {
   return 0;
 }
 
+const menuItemStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: '6px 8px',
+  border: 'none',
+  borderRadius: 3,
+  background: 'transparent',
+  color: '#fff',
+  fontSize: 13,
+  textAlign: 'left',
+  cursor: 'pointer',
+};
+
 function Playground() {
   const [urlSpec] = useState(getUrlSpec);
-  const [uploads, setUploads] = useState<SpecEntry[]>([]);
+  const [uploads, setUploads] = useState<SpecEntry[]>(getStoredUploads);
   const specs = useMemo(
     () => [...SPECS, ...(urlSpec ? [urlSpec] : []), ...uploads],
     [urlSpec, uploads],
   );
   const [selectedIdx, setSelectedIdx] = useState(() =>
-    urlSpec ? specs.length - 1 : getStoredIdx(),
+    urlSpec ? specs.length - 1 : getStoredIdx(specs.length),
   );
   const [loading, setLoading] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(UPLOADS_STORAGE_KEY, JSON.stringify(uploads));
+    } catch {
+      /* storage full or disabled: uploads stay in memory for this page */
+    }
+  }, [uploads]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [menuOpen]);
 
   const handleSelect = useCallback((idx: number) => {
     setSelectedIdx(idx);
@@ -163,6 +224,17 @@ function Playground() {
     }
   }, []);
 
+  const openFilePicker = useCallback(() => {
+    setMenuOpen(false);
+    fileInputRef.current?.click();
+  }, []);
+
+  const removeUploads = useCallback(() => {
+    setMenuOpen(false);
+    setUploads([]);
+    if (selectedIdx >= SPECS.length + (urlSpec ? 1 : 0)) handleSelect(0);
+  }, [handleSelect, selectedIdx, urlSpec]);
+
   const spec = specs[selectedIdx] ?? specs[0];
 
   return (
@@ -209,27 +281,62 @@ function Playground() {
             </option>
           ))}
         </select>
-        <label
-          htmlFor="playground-upload"
-          style={{
-            padding: '4px 10px',
-            borderRadius: 4,
-            border: '1px solid #3a5068',
-            background: '#0d1b2a',
-            color: '#fff',
-            fontSize: 13,
-            cursor: 'pointer',
-          }}
-        >
-          Upload file
-        </label>
-        <input
-          id="playground-upload"
-          type="file"
-          accept={UPLOAD_EXTENSIONS}
-          onChange={handleUpload}
-          style={{ display: 'none' }}
-        />
+        <div ref={menuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 4,
+              border: '1px solid #3a5068',
+              background: '#0d1b2a',
+              color: '#fff',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            Upload
+            <span aria-hidden="true">▾</span>
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 4px)',
+                left: 0,
+                minWidth: 180,
+                padding: 4,
+                borderRadius: 4,
+                border: '1px solid #3a5068',
+                background: '#0d1b2a',
+                boxShadow: '0 6px 16px rgba(0, 0, 0, 0.35)',
+                zIndex: 10001,
+              }}
+            >
+              <button type="button" role="menuitem" onClick={openFilePicker} style={menuItemStyle}>
+                Upload file…
+              </button>
+              {uploads.length > 0 && (
+                <button type="button" role="menuitem" onClick={removeUploads} style={menuItemStyle}>
+                  Remove uploaded files
+                </button>
+              )}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={UPLOAD_EXTENSIONS}
+            onChange={handleUpload}
+            style={{ display: 'none' }}
+          />
+        </div>
         {loading && <span style={{ opacity: 0.6 }}>Loading...</span>}
       </div>
       <RedocStandalone
