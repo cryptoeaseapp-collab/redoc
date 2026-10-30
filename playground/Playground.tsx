@@ -11,9 +11,21 @@ const BASE_PATH = '/docs';
 
 type SpecEntry = {
   label: string;
-  path: string;
+  path?: string;
   type: ApiSpecType;
+  /** Text of a file uploaded in the browser; `path` is then unset. */
+  content?: string;
 };
+
+const UPLOAD_EXTENSIONS = '.yaml,.yml,.json,.graphql,.gql';
+
+/** AsyncAPI and OpenAPI share YAML/JSON syntax, so the root key decides; GraphQL is extension-based. */
+function detectSpecType(fileName: string, content: string): ApiSpecType {
+  const extension = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
+  if (extension === '.graphql' || extension === '.gql') return apiSpecType.GRAPHQL;
+  if (/^\s*(?:---\s*)?asyncapi\s*:/m.test(content)) return apiSpecType.ASYNCAPI;
+  return apiSpecType.OPENAPI;
+}
 
 const SPECS: SpecEntry[] = [
   {
@@ -93,7 +105,11 @@ function getStoredIdx(): number {
 
 function Playground() {
   const [urlSpec] = useState(getUrlSpec);
-  const specs = useMemo(() => (urlSpec ? [...SPECS, urlSpec] : SPECS), [urlSpec]);
+  const [uploads, setUploads] = useState<SpecEntry[]>([]);
+  const specs = useMemo(
+    () => [...SPECS, ...(urlSpec ? [urlSpec] : []), ...uploads],
+    [urlSpec, uploads],
+  );
   const [selectedIdx, setSelectedIdx] = useState(() =>
     urlSpec ? specs.length - 1 : getStoredIdx(),
   );
@@ -109,6 +125,36 @@ function Playground() {
     }
     window.history.replaceState(null, '', BASE_PATH);
   }, []);
+
+  /** Reads the picked file in the browser and adds it to the dropdown, selected. */
+  const handleUpload = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const input = event.target;
+      const file = input.files?.[0];
+      // Clearing the value lets the same file be picked again after it was edited.
+      input.value = '';
+      if (!file) return;
+
+      const uploadedIdx = uploads.findIndex((entry) => entry.label === file.name);
+      void file.text().then((content) => {
+        const entry: SpecEntry = {
+          label: file.name,
+          type: detectSpecType(file.name, content),
+          content,
+        };
+        setUploads((prev) => {
+          const existingIdx = prev.findIndex((item) => item.label === entry.label);
+          if (existingIdx === -1) return [...prev, entry];
+          const next = [...prev];
+          next[existingIdx] = entry;
+          return next;
+        });
+        const base = SPECS.length + (urlSpec ? 1 : 0);
+        handleSelect(base + (uploadedIdx === -1 ? uploads.length : uploadedIdx));
+      });
+    },
+    [handleSelect, uploads, urlSpec],
+  );
 
   const handleLoaded = useCallback((error?: Error) => {
     setLoading(false);
@@ -129,6 +175,7 @@ function Playground() {
           right: 0,
           zIndex: 10000,
           display: 'flex',
+          flexWrap: 'wrap',
           alignItems: 'center',
           gap: 8,
           padding: '6px 16px',
@@ -157,15 +204,37 @@ function Playground() {
           }}
         >
           {specs.map((s, i) => (
-            <option key={`${s.path}-${i}`} value={i}>
+            <option key={`${s.label}-${i}`} value={i}>
               {s.label} ({s.type})
             </option>
           ))}
         </select>
+        <label
+          htmlFor="playground-upload"
+          style={{
+            padding: '4px 10px',
+            borderRadius: 4,
+            border: '1px solid #3a5068',
+            background: '#0d1b2a',
+            color: '#fff',
+            fontSize: 13,
+            cursor: 'pointer',
+          }}
+        >
+          Upload file
+        </label>
+        <input
+          id="playground-upload"
+          type="file"
+          accept={UPLOAD_EXTENSIONS}
+          onChange={handleUpload}
+          style={{ display: 'none' }}
+        />
         {loading && <span style={{ opacity: 0.6 }}>Loading...</span>}
       </div>
       <RedocStandalone
         key={selectedIdx}
+        spec={spec.content}
         specUrl={spec.path}
         options={getOptions(spec)}
         basePath={BASE_PATH}
