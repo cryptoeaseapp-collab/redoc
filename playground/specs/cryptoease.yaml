@@ -1,0 +1,1403 @@
+openapi: 3.1.0
+info:
+  title: Cryptoease API
+  version: 1.0.0
+  description: >
+    Cryptoease is a spot exchange API for trading crypto assets. Use it to read
+    public market data, manage trading accounts, place and cancel orders, move
+    funds on and off the exchange, and subscribe to real-time events over
+    webhooks.
+
+
+    All authenticated endpoints expect a bearer token issued from the
+    Cryptoease dashboard. Sandbox tokens trade simulated balances and never
+    touch the live order book.
+  contact:
+    name: Cryptoease Developer Support
+    email: developers@cryptoease.io
+    url: https://cryptoease.io/developers
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  termsOfService: https://cryptoease.io/terms
+externalDocs:
+  description: Guides, SDKs and changelog
+  url: https://docs.cryptoease.io
+servers:
+  - url: https://api.cryptoease.io/v1
+    description: Production
+  - url: https://sandbox-api.cryptoease.io/v1
+    description: Sandbox — simulated funds
+security:
+  - bearerAuth: []
+tags:
+  - name: Markets
+    description: >
+      Public market data. These endpoints are unauthenticated and rate limited
+      per IP address.
+  - name: Accounts
+    description: Trading accounts and their balances.
+  - name: Orders
+    description: Place, inspect and cancel spot orders.
+  - name: Wallets
+    description: Deposits and withdrawals of on-chain assets.
+  - name: Webhooks
+    description: Event subscriptions for order and wallet activity.
+paths:
+  /markets:
+    get:
+      tags:
+        - Markets
+      summary: List markets
+      description: >
+        Returns every tradable pair along with its tick size, lot size and
+        trading status. Use the `quote` filter to narrow the list to a single
+        quote asset.
+      operationId: listMarkets
+      security: []
+      parameters:
+        - name: quote
+          in: query
+          description: Only return markets quoted in this asset.
+          schema:
+            type: string
+            example: USDT
+        - name: status
+          in: query
+          description: Filter by trading status.
+          schema:
+            $ref: '#/components/schemas/MarketStatus'
+      responses:
+        '200':
+          description: A list of markets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Market'
+              example:
+                - symbol: BTC-USDT
+                  baseAsset: BTC
+                  quoteAsset: USDT
+                  status: active
+                  tickSize: '0.01'
+                  lotSize: '0.00001'
+                  minNotional: '5.00'
+                  makerFeeBps: 10
+                  takerFeeBps: 20
+                - symbol: ETH-USDT
+                  baseAsset: ETH
+                  quoteAsset: USDT
+                  status: active
+                  tickSize: '0.01'
+                  lotSize: '0.0001'
+                  minNotional: '5.00'
+                  makerFeeBps: 10
+                  takerFeeBps: 20
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /markets/{symbol}:
+    get:
+      tags:
+        - Markets
+      summary: Get a market
+      operationId: getMarket
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+      responses:
+        '200':
+          description: The requested market.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Market'
+        '404':
+          $ref: '#/components/responses/MarketNotFound'
+  /markets/{symbol}/ticker:
+    get:
+      tags:
+        - Markets
+      summary: Get ticker statistics
+      description: >
+        Latest price plus rolling 24-hour high, low, volume and percentage
+        change for a single market.
+      operationId: getTicker
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+      responses:
+        '200':
+          description: Ticker statistics for the market.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticker'
+              example:
+                symbol: BTC-USDT
+                lastPrice: '67412.35'
+                bidPrice: '67412.10'
+                askPrice: '67412.60'
+                high24h: '68120.00'
+                low24h: '66250.10'
+                volume24h: '18422.4153'
+                quoteVolume24h: '1240385112.44'
+                change24hPct: '-0.84'
+                timestamp: '2026-11-12T02:15:00.000Z'
+        '404':
+          $ref: '#/components/responses/MarketNotFound'
+  /markets/{symbol}/orderbook:
+    get:
+      tags:
+        - Markets
+      summary: Get the order book
+      description: >
+        Snapshot of aggregated bids and asks. `depth` caps the number of price
+        levels per side; bids are sorted by descending price, asks ascending.
+      operationId: getOrderBook
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+        - name: depth
+          in: query
+          description: Number of price levels per side.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 20
+            example: 20
+      responses:
+        '200':
+          description: Order book snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBook'
+        '404':
+          $ref: '#/components/responses/MarketNotFound'
+  /markets/{symbol}/candles:
+    get:
+      tags:
+        - Markets
+      summary: Get candlesticks
+      description: >
+        OHLCV candles for charting. Candles are returned oldest first and only
+        closed intervals are included unless the interval is still in progress.
+      operationId: listCandles
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+        - name: interval
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/CandleInterval'
+        - name: startTime
+          in: query
+          description: Return candles closing at or after this instant.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+      responses:
+        '200':
+          description: Candles for the requested interval.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Candle'
+        '404':
+          $ref: '#/components/responses/MarketNotFound'
+  /accounts:
+    get:
+      tags:
+        - Accounts
+      summary: List accounts
+      description: >
+        Returns the trading accounts the bearer token can access. Spot accounts
+        hold the balances used by the Orders endpoints.
+      operationId: listAccounts
+      responses:
+        '200':
+          description: Accounts owned by the authenticated user.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+              example:
+                - id: acct_8f13c2a7
+                  type: spot
+                  status: active
+                  permissions:
+                    - trade
+                    - withdraw
+                  createdAt: '2025-03-08T11:02:44.000Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /accounts/{accountId}/balances:
+    get:
+      tags:
+        - Accounts
+      summary: List balances
+      description: >
+        Balances for one account, including funds currently locked in open
+        orders. Assets with a zero balance are omitted.
+      operationId: listBalances
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Balances held by the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Balance'
+              example:
+                - asset: BTC
+                  available: '0.4521'
+                  reserved: '0.0100'
+                  total: '0.4621'
+                - asset: USDT
+                  available: '18240.55'
+                  reserved: '1500.00'
+                  total: '19740.55'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+  /orders:
+    get:
+      tags:
+        - Orders
+      summary: List orders
+      description: >
+        Returns orders newest first, filtered by market and status. Pages are
+        cursor based: pass the `nextCursor` from one page as `cursor` to fetch
+        the next.
+      operationId: listOrders
+      parameters:
+        - $ref: '#/components/parameters/SymbolQuery'
+        - name: status
+          in: query
+          description: Only return orders in this state.
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+        - Orders
+      summary: Create an order
+      description: >
+        Places a new spot order. The request body is one of three order types,
+        discriminated by `type`: `limit`, `market` or `stop_limit`.
+
+
+        Send an `Idempotency-Key` header to make retries safe — replaying the
+        same key with the same body returns the original order instead of
+        creating a second one.
+      operationId: createOrder
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              limit:
+                summary: Limit buy
+                value:
+                  symbol: BTC-USDT
+                  side: buy
+                  type: limit
+                  quantity: '0.0500'
+                  price: '66000.00'
+                  timeInForce: GTC
+              market:
+                summary: Market sell
+                value:
+                  symbol: ETH-USDT
+                  side: sell
+                  type: market
+                  quoteQuantity: '500.00'
+      responses:
+        '201':
+          description: The order was accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: ord_01JB8Z3QK7
+                clientOrderId: my-bot-0042
+                symbol: BTC-USDT
+                side: buy
+                type: limit
+                status: open
+                price: '66000.00'
+                quantity: '0.0500'
+                filledQuantity: '0'
+                timeInForce: GTC
+                createdAt: '2026-11-12T02:18:09.514Z'
+                updatedAt: '2026-11-12T02:18:09.514Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /orders/{orderId}:
+    get:
+      tags:
+        - Orders
+      summary: Get an order
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: The requested order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+    delete:
+      tags:
+        - Orders
+      summary: Cancel an order
+      description: >
+        Cancels an open order and releases the funds reserved for it. Cancelling
+        an order that is already filled or cancelled returns `409`.
+      operationId: cancelOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: The order after cancellation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/OrderNotCancelable'
+  /orders/{orderId}/fills:
+    get:
+      tags:
+        - Orders
+      summary: List fills for an order
+      description: >
+        Every execution against the order, including partial fills, with the fee
+        charged on each.
+      operationId: listOrderFills
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Executions for the order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Fill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+  /wallets/{asset}/deposit-address:
+    get:
+      tags:
+        - Wallets
+      summary: Get a deposit address
+      description: >
+        Returns the deposit address for an asset on a given network. Addresses
+        are reused per account; include the `memo` when the network requires one.
+      operationId: getDepositAddress
+      parameters:
+        - $ref: '#/components/parameters/Asset'
+        - name: network
+          in: query
+          required: true
+          description: Network to deposit over.
+          schema:
+            $ref: '#/components/schemas/Network'
+      responses:
+        '200':
+          description: Deposit address details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositAddress'
+              example:
+                asset: USDT
+                network: tron
+                address: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE
+                memo: null
+                minimumDeposit: '10.00'
+                createdAt: '2026-02-01T09:30:00.000Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /withdrawals:
+    post:
+      tags:
+        - Wallets
+      summary: Withdraw funds
+      description: >
+        Sends funds to an external address. Withdrawals are asynchronous: the
+        response returns `pending` and webhooks report the final state. Quote an
+        `Idempotency-Key` — a duplicate submission with the same key returns the
+        original withdrawal.
+      operationId: createWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWithdrawalRequest'
+            example:
+              asset: USDT
+              network: tron
+              amount: '250.00'
+              address: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE
+      responses:
+        '201':
+          description: The withdrawal was accepted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+              example:
+                id: wd_01JB9A6T2M
+                asset: USDT
+                network: tron
+                amount: '250.00'
+                fee: '1.00'
+                address: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE
+                status: pending
+                createdAt: '2026-11-12T02:22:41.902Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /webhooks:
+    post:
+      tags:
+        - Webhooks
+      summary: Create a webhook
+      description: >
+        Subscribes an HTTPS endpoint to the listed events. Every delivery is
+        signed with the returned `secret` in the `Cryptoease-Signature` header;
+        verify it before trusting the payload.
+      operationId: createWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+                - events
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: HTTPS endpoint that receives deliveries.
+                events:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/WebhookEvent'
+      responses:
+        '201':
+          description: The webhook subscription.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+              example:
+                id: wh_01JB4M0Q2C
+                url: https://trading.example.com/cryptoease/events
+                events:
+                  - order.filled
+                  - withdrawal.completed
+                secret: whsec_3f9a1c7d2b8e4f60
+                status: enabled
+                createdAt: '2026-11-12T02:24:12.008Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /webhooks/{webhookId}:
+    delete:
+      tags:
+        - Webhooks
+      summary: Delete a webhook
+      description: Stops deliveries immediately. In-flight retries are dropped.
+      operationId: deleteWebhook
+      parameters:
+        - name: webhookId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: wh_01JB4M0Q2C
+      responses:
+        '204':
+          description: The webhook was deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Token from **Dashboard → Developers → API keys**. Send it as
+        `Authorization: Bearer <token>`. Scope the key to read-only or trading
+        when you create it.
+  parameters:
+    Symbol:
+      name: symbol
+      in: path
+      required: true
+      description: Market symbol in `BASE-QUOTE` form.
+      schema:
+        type: string
+        pattern: '^[A-Z0-9]+-[A-Z0-9]+$'
+        example: BTC-USDT
+    SymbolQuery:
+      name: symbol
+      in: query
+      description: Only return orders for this market.
+      schema:
+        type: string
+        example: BTC-USDT
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: ord_01JB8Z3QK7
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: acct_8f13c2a7
+    Asset:
+      name: asset
+      in: path
+      required: true
+      description: Asset ticker, for example `BTC` or `USDT`.
+      schema:
+        type: string
+        example: USDT
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor returned as `nextCursor` by the previous page.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: >
+        Client-generated unique key (UUID recommended). Reusing a key with a
+        different body returns `409`.
+      schema:
+        type: string
+        maxLength: 100
+        example: 6b9f5f0c-4c92-4d71-9a55-8f3a1c7d2b8e
+  responses:
+    Unauthorized:
+      description: Missing, expired or malformed bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 401
+            code: unauthorized
+            message: Access token is missing or has expired.
+            requestId: req_7c1a90b3
+    MarketNotFound:
+      description: No market trades under that symbol.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 404
+            code: market_not_found
+            message: Market BTX-USDT does not exist.
+            requestId: req_2d4e88fa
+    AccountNotFound:
+      description: The account does not exist or is not visible to this token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    OrderNotFound:
+      description: The order does not exist or is not visible to this token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    OrderNotCancelable:
+      description: The order is already filled or cancelled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 409
+            code: order_not_cancelable
+            message: Order ord_01JB8Z3QK7 is already filled.
+            requestId: req_91ba2c05
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ValidationError:
+      description: The request body or parameters failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 422
+            code: validation_failed
+            message: Order quantity is below the market lot size.
+            details:
+              field: quantity
+              minimum: '0.00001'
+            requestId: req_5f7c11de
+    RateLimited:
+      description: >
+        Request rate exceeded. Retry after the number of seconds in
+        `Retry-After`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            example: 2
+        X-RateLimit-Limit:
+          description: Requests allowed in the current window.
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          description: Requests left in the current window.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 429
+            code: rate_limited
+            message: Too many requests. Retry in 2 seconds.
+            requestId: req_a03f7b19
+  schemas:
+    MarketStatus:
+      type: string
+      description: Whether the market accepts new orders.
+      enum:
+        - active
+        - reduce_only
+        - paused
+        - delisted
+    CandleInterval:
+      type: string
+      description: Candle width. Minutes (`m`), hours (`h`), days (`d`) and weeks (`w`).
+      enum:
+        - 1m
+        - 5m
+        - 15m
+        - 30m
+        - 1h
+        - 4h
+        - 1d
+        - 1w
+    Network:
+      type: string
+      description: Transfer network. Availability depends on the asset.
+      enum:
+        - bitcoin
+        - ethereum
+        - tron
+        - solana
+        - polygon
+    Market:
+      type: object
+      required:
+        - symbol
+        - baseAsset
+        - quoteAsset
+        - status
+        - tickSize
+        - lotSize
+      properties:
+        symbol:
+          type: string
+          description: Market identifier in `BASE-QUOTE` form.
+          example: BTC-USDT
+        baseAsset:
+          type: string
+          description: Asset being bought or sold.
+          example: BTC
+        quoteAsset:
+          type: string
+          description: Asset used to price the base asset.
+          example: USDT
+        status:
+          $ref: '#/components/schemas/MarketStatus'
+        tickSize:
+          type: string
+          description: Smallest allowed price increment.
+          example: '0.01'
+        lotSize:
+          type: string
+          description: Smallest allowed quantity increment.
+          example: '0.00001'
+        minNotional:
+          type: string
+          description: Minimum order value in the quote asset.
+          example: '5.00'
+        makerFeeBps:
+          type: integer
+          description: Maker fee in basis points.
+          example: 10
+        takerFeeBps:
+          type: integer
+          description: Taker fee in basis points.
+          example: 20
+        listedAt:
+          type: string
+          format: date-time
+          description: When the market opened for trading.
+    Ticker:
+      type: object
+      required:
+        - symbol
+        - lastPrice
+        - timestamp
+      properties:
+        symbol:
+          type: string
+          example: BTC-USDT
+        lastPrice:
+          type: string
+          description: Last traded price.
+          example: '67412.35'
+        bidPrice:
+          type: string
+          description: Best bid price.
+          example: '67412.10'
+        askPrice:
+          type: string
+          description: Best ask price.
+          example: '67412.60'
+        high24h:
+          type: string
+          example: '68120.00'
+        low24h:
+          type: string
+          example: '66250.10'
+        volume24h:
+          type: string
+          description: Base asset volume over the last 24 hours.
+          example: '18422.4153'
+        quoteVolume24h:
+          type: string
+          description: Quote asset volume over the last 24 hours.
+          example: '1240385112.44'
+        change24hPct:
+          type: string
+          description: Percentage change over the last 24 hours.
+          example: '-0.84'
+        timestamp:
+          type: string
+          format: date-time
+    OrderBook:
+      type: object
+      required:
+        - symbol
+        - bids
+        - asks
+      properties:
+        symbol:
+          type: string
+          example: BTC-USDT
+        bids:
+          type: array
+          description: Buy-side levels, highest price first.
+          items:
+            $ref: '#/components/schemas/OrderBookLevel'
+        asks:
+          type: array
+          description: Sell-side levels, lowest price first.
+          items:
+            $ref: '#/components/schemas/OrderBookLevel'
+    OrderBookLevel:
+      type: object
+      required:
+        - price
+        - quantity
+      properties:
+        price:
+          type: string
+          example: '67412.10'
+        quantity:
+          type: string
+          description: Total base quantity available at this price.
+          example: '0.8120'
+        orderCount:
+          type: integer
+          description: Number of orders aggregated into the level.
+          example: 4
+    Candle:
+      type: object
+      required:
+        - openTime
+        - open
+        - high
+        - low
+        - close
+        - volume
+      properties:
+        openTime:
+          type: string
+          format: date-time
+          description: Start of the interval.
+        open:
+          type: string
+          example: '67010.00'
+        high:
+          type: string
+          example: '67550.00'
+        low:
+          type: string
+          example: '66980.00'
+        close:
+          type: string
+          example: '67412.35'
+        volume:
+          type: string
+          description: Base asset volume traded in the interval.
+          example: '412.8821'
+    Account:
+      type: object
+      required:
+        - id
+        - type
+        - status
+      properties:
+        id:
+          type: string
+          example: acct_8f13c2a7
+        type:
+          type: string
+          description: Account product.
+          enum:
+            - spot
+            - margin
+        status:
+          type: string
+          enum:
+            - active
+            - frozen
+            - closed
+        permissions:
+          type: array
+          description: Actions this account may perform.
+          items:
+            type: string
+            enum:
+              - read
+              - trade
+              - withdraw
+        createdAt:
+          type: string
+          format: date-time
+    Balance:
+      type: object
+      required:
+        - asset
+        - available
+        - total
+      properties:
+        asset:
+          type: string
+          example: BTC
+        available:
+          type: string
+          description: Amount free to trade or withdraw.
+          example: '0.4521'
+        reserved:
+          type: string
+          description: Amount locked in open orders.
+          example: '0.0100'
+        total:
+          type: string
+          description: Sum of available and reserved.
+          example: '0.4621'
+    OrderStatus:
+      type: string
+      description: Lifecycle state of an order.
+      enum:
+        - pending_new
+        - open
+        - partially_filled
+        - filled
+        - canceled
+        - rejected
+        - expired
+    OrderSide:
+      type: string
+      enum:
+        - buy
+        - sell
+    TimeInForce:
+      type: string
+      description: >
+        `GTC` rests until filled or cancelled, `IOC` fills what it can and
+        cancels the rest, `FOK` fills completely or not at all.
+      enum:
+        - GTC
+        - IOC
+        - FOK
+    Order:
+      type: object
+      required:
+        - id
+        - symbol
+        - side
+        - type
+        - status
+        - quantity
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: ord_01JB8Z3QK7
+        clientOrderId:
+          type: string
+          description: Caller-supplied identifier for reconciliation.
+          example: my-bot-0042
+        symbol:
+          type: string
+          example: BTC-USDT
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        type:
+          type: string
+          enum:
+            - limit
+            - market
+            - stop_limit
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        price:
+          type: string
+          description: Limit price. Absent for market orders.
+          example: '66000.00'
+        stopPrice:
+          type: string
+          description: Trigger price for stop-limit orders.
+          example: '65000.00'
+        quantity:
+          type: string
+          description: Ordered base quantity.
+          example: '0.0500'
+        quoteQuantity:
+          type: string
+          description: Ordered quote spend for market buys.
+          example: '500.00'
+        filledQuantity:
+          type: string
+          description: Base quantity executed so far.
+          example: '0.0200'
+        averageFillPrice:
+          type: string
+          description: Volume-weighted average execution price.
+          example: '66102.40'
+        timeInForce:
+          $ref: '#/components/schemas/TimeInForce'
+        fee:
+          type: string
+          description: Fees charged so far, in `feeAsset`.
+          example: '0.1322'
+        feeAsset:
+          type: string
+          example: USDT
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    OrderList:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        nextCursor:
+          type: string
+          description: Pass as `cursor` to fetch the next page. Absent on the last page.
+          example: eyJpZCI6Im9yZF8wMUpCOFo0In0
+    CreateOrderRequest:
+      description: >
+        One of `LimitOrderRequest`, `MarketOrderRequest` or
+        `StopLimitOrderRequest`, selected by the `type` field.
+      oneOf:
+        - $ref: '#/components/schemas/LimitOrderRequest'
+        - $ref: '#/components/schemas/MarketOrderRequest'
+        - $ref: '#/components/schemas/StopLimitOrderRequest'
+      discriminator:
+        propertyName: type
+        mapping:
+          limit: '#/components/schemas/LimitOrderRequest'
+          market: '#/components/schemas/MarketOrderRequest'
+          stop_limit: '#/components/schemas/StopLimitOrderRequest'
+    CreateOrderBase:
+      type: object
+      required:
+        - symbol
+        - side
+        - type
+      properties:
+        symbol:
+          type: string
+          description: Market to trade.
+          example: BTC-USDT
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        clientOrderId:
+          type: string
+          description: Your identifier, echoed on the order and its fills.
+          maxLength: 64
+          example: my-bot-0042
+    LimitOrderRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateOrderBase'
+        - type: object
+          required:
+            - type
+            - quantity
+            - price
+          properties:
+            type:
+              type: string
+              const: limit
+            quantity:
+              type: string
+              description: Base quantity to buy or sell.
+              example: '0.0500'
+            price:
+              type: string
+              description: Limit price. Must respect the market tick size.
+              example: '66000.00'
+            timeInForce:
+              $ref: '#/components/schemas/TimeInForce'
+    MarketOrderRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateOrderBase'
+        - type: object
+          required:
+            - type
+          properties:
+            type:
+              type: string
+              const: market
+            quantity:
+              type: string
+              description: Base quantity to buy or sell. Omit when sending `quoteQuantity`.
+              example: '0.0500'
+            quoteQuantity:
+              type: string
+              description: Quote amount to spend. Market buys only.
+              example: '500.00'
+    StopLimitOrderRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateOrderBase'
+        - type: object
+          required:
+            - type
+            - quantity
+            - price
+            - stopPrice
+          properties:
+            type:
+              type: string
+              const: stop_limit
+            quantity:
+              type: string
+              example: '0.0500'
+            price:
+              type: string
+              description: Limit price used once the stop triggers.
+              example: '65000.00'
+            stopPrice:
+              type: string
+              description: Price at which the order is submitted to the book.
+              example: '64800.00'
+            timeInForce:
+              $ref: '#/components/schemas/TimeInForce'
+    Fill:
+      type: object
+      required:
+        - id
+        - orderId
+        - price
+        - quantity
+        - executedAt
+      properties:
+        id:
+          type: string
+          example: fill_01JB8Z4A11
+        orderId:
+          type: string
+          example: ord_01JB8Z3QK7
+        symbol:
+          type: string
+          example: BTC-USDT
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        price:
+          type: string
+          example: '66098.00'
+        quantity:
+          type: string
+          example: '0.0200'
+        fee:
+          type: string
+          example: '0.1322'
+        feeAsset:
+          type: string
+          example: USDT
+        liquidity:
+          type: string
+          description: Whether the fill rested on the book or crossed it.
+          enum:
+            - maker
+            - taker
+        executedAt:
+          type: string
+          format: date-time
+    DepositAddress:
+      type: object
+      required:
+        - asset
+        - network
+        - address
+      properties:
+        asset:
+          type: string
+          example: USDT
+        network:
+          $ref: '#/components/schemas/Network'
+        address:
+          type: string
+          example: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE
+        memo:
+          type: [string, 'null']
+          description: Destination tag, when the network requires one.
+          example: null
+        minimumDeposit:
+          type: string
+          description: Smallest deposit credited, in `asset`.
+          example: '10.00'
+        createdAt:
+          type: string
+          format: date-time
+    CreateWithdrawalRequest:
+      type: object
+      required:
+        - asset
+        - network
+        - amount
+        - address
+      properties:
+        asset:
+          type: string
+          example: USDT
+        network:
+          $ref: '#/components/schemas/Network'
+        amount:
+          type: string
+          description: Amount to send, before the network fee.
+          example: '250.00'
+        address:
+          type: string
+          description: Destination address on the chosen network.
+          example: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE
+        memo:
+          type: string
+          description: Destination tag, when the network requires one.
+    Withdrawal:
+      type: object
+      required:
+        - id
+        - asset
+        - amount
+        - status
+      properties:
+        id:
+          type: string
+          example: wd_01JB9A6T2M
+        asset:
+          type: string
+          example: USDT
+        network:
+          $ref: '#/components/schemas/Network'
+        amount:
+          type: string
+          example: '250.00'
+        fee:
+          type: string
+          description: Network fee deducted from the amount sent.
+          example: '1.00'
+        address:
+          type: string
+          example: TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+            - canceled
+        txId:
+          type: string
+          description: On-chain transaction hash, once broadcast.
+          example: 9f2c41b7a0d84e6f1c53aa0b7d29e884
+        createdAt:
+          type: string
+          format: date-time
+    WebhookEvent:
+      type: string
+      description: Event types a webhook can subscribe to.
+      enum:
+        - order.filled
+        - order.partially_filled
+        - order.canceled
+        - deposit.confirmed
+        - withdrawal.completed
+    Webhook:
+      type: object
+      required:
+        - id
+        - url
+        - events
+        - status
+      properties:
+        id:
+          type: string
+          example: wh_01JB4M0Q2C
+        url:
+          type: string
+          format: uri
+          example: https://trading.example.com/cryptoease/events
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEvent'
+        secret:
+          type: string
+          description: >
+            Signing secret for the `Cryptoease-Signature` header. Only returned
+            when the webhook is created.
+          example: whsec_3f9a1c7d2b8e4f60
+        status:
+          type: string
+          enum:
+            - enabled
+            - disabled
+        createdAt:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required:
+        - status
+        - code
+        - message
+      properties:
+        status:
+          type: integer
+          description: HTTP status code.
+          example: 422
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          example: validation_failed
+        message:
+          type: string
+          description: Human-readable explanation.
+          example: Order quantity is below the market lot size.
+        details:
+          type: object
+          description: Extra context, for example the offending field.
+          additionalProperties: true
+        requestId:
+          type: string
+          description: Include this when contacting support.
+          example: req_5f7c11de

@@ -17,6 +17,11 @@ type SpecEntry = {
 
 const SPECS: SpecEntry[] = [
   {
+    label: 'Cryptoease',
+    path: '/specs/cryptoease.yaml',
+    type: apiSpecType.OPENAPI,
+  },
+  {
     label: 'Cafe',
     path: '/specs/cafe.yaml',
     type: apiSpecType.OPENAPI,
