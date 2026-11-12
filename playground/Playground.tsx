@@ -22,6 +22,11 @@ const SPECS: SpecEntry[] = [
     type: apiSpecType.OPENAPI,
   },
   {
+    label: 'Cryptoease (GraphQL)',
+    path: '/specs/cryptoease.graphql',
+    type: apiSpecType.GRAPHQL,
+  },
+  {
     label: 'Cafe',
     path: '/specs/cafe.yaml',
     type: apiSpecType.OPENAPI,

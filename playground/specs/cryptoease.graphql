@@ -1,0 +1,518 @@
+"""
+Cryptoease GraphQL API.
+
+Trade spot and perpetual markets, follow balances, place and cancel orders, and
+subscribe to live order and price updates — the same exchange domain as the
+Cryptoease REST API.
+"""
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+"An ISO 8601 date-time string, for example `2026-11-12T02:15:00Z`."
+scalar DateTime
+
+"A prefixed identifier, for example `ord_01JB8Z3QK7` or `acct_8f13c2a7`."
+scalar PrefixedID
+
+"""
+A fixed-point decimal encoded as a string, for example `"67412.35"`. Amounts are
+never returned as floats, so no precision is lost.
+"""
+scalar Decimal
+
+type Query {
+  "List tradable markets, optionally filtered by quote asset or status."
+  markets(
+    "Only return markets quoted in this asset, for example `USDT`."
+    quote: String
+    status: MarketStatus
+    "Maximum number of markets to return."
+    limit: Int = 50
+  ): [Market!]!
+
+  "Fetch a single market by its `BASE-QUOTE` symbol."
+  market(symbol: String!): Market
+
+  "Latest price and rolling 24-hour statistics for a market."
+  ticker(symbol: String!): Ticker!
+
+  "Aggregated order book snapshot for a market."
+  orderBook(
+    symbol: String!
+    "Price levels per side, up to 500."
+    depth: Int = 20
+  ): OrderBook!
+
+  "OHLCV candles for charting, oldest first."
+  candles(
+    symbol: String!
+    interval: CandleInterval!
+    "Return candles opening at or after this instant."
+    startTime: DateTime
+    limit: Int = 200
+  ): [Candle!]!
+
+  "Trading accounts the caller can access."
+  accounts: [Account!]!
+
+  "Balances of one account, skipping assets with a zero balance."
+  balances(accountId: PrefixedID!): [Balance!]!
+
+  "Orders for the caller, newest first, cursor paginated."
+  orders(
+    symbol: String
+    status: OrderStatus
+    "Opaque cursor from `pageInfo.endCursor` of the previous page."
+    after: String
+    limit: Int = 50
+  ): OrderConnection!
+
+  "Fetch a single order by ID."
+  order(id: PrefixedID!): Order
+
+  "Executions against one order, including partial fills."
+  fills(orderId: PrefixedID!, limit: Int = 50): [Fill!]!
+
+  "Deposit address for an asset on a given network."
+  depositAddress(asset: String!, network: Network!): DepositAddress!
+
+  "Withdrawals submitted by the caller, newest first."
+  withdrawals(status: WithdrawalStatus, limit: Int = 50): [Withdrawal!]!
+
+  "Webhook subscriptions configured for the caller."
+  webhooks: [Webhook!]!
+
+  "Search markets and orders in one query."
+  search(term: String!): [SearchResult!]!
+
+  "Last traded price for a market."
+  price(symbol: String!): Decimal!
+    @deprecated(reason: "Use `ticker`; it returns the full 24-hour statistics.")
+}
+
+type Mutation {
+  "Place a spot order. Retries are safe when `clientOrderId` is repeated."
+  placeOrder(input: PlaceOrderInput!): PlaceOrderPayload!
+
+  "Cancel an open order and release the funds reserved for it."
+  cancelOrder(orderId: PrefixedID!): Order!
+
+  "Send funds to an external address. Returns while the transfer is still pending."
+  createWithdrawal(input: CreateWithdrawalInput!): Withdrawal!
+
+  "Subscribe an HTTPS endpoint to order and wallet events."
+  createWebhook(input: CreateWebhookInput!): Webhook!
+
+  "Stop deliveries to a webhook immediately."
+  deleteWebhook(id: PrefixedID!): Boolean!
+}
+
+type Subscription {
+  "Fires on every status change of an order, for one market or all of them."
+  orderUpdated(symbol: String): Order!
+
+  "Streaming ticker for a market, pushed on every trade."
+  tickerUpdated(symbol: String!): Ticker!
+
+  "Live feed of executions for an account."
+  fillCreated(accountId: PrefixedID): Fill!
+}
+
+"Fields shared by every tradable market."
+interface Instrument {
+  "Market identifier in `BASE-QUOTE` form."
+  symbol: String!
+  "Asset being bought or sold."
+  baseAsset: String!
+  "Asset used to price the base asset."
+  quoteAsset: String!
+  status: MarketStatus!
+  "Smallest allowed price increment."
+  tickSize: Decimal!
+  "Smallest allowed quantity increment."
+  lotSize: Decimal!
+}
+
+"A spot market: buy and sell one asset for another."
+type SpotMarket implements Instrument {
+  symbol: String!
+  baseAsset: String!
+  quoteAsset: String!
+  status: MarketStatus!
+  tickSize: Decimal!
+  lotSize: Decimal!
+  "Minimum order value in the quote asset."
+  minNotional: Decimal!
+  "Maker fee in basis points."
+  makerFeeBps: Int!
+  "Taker fee in basis points."
+  takerFeeBps: Int!
+  "When the market opened for trading."
+  listedAt: DateTime!
+}
+
+"A perpetual futures market settled in the quote asset."
+type PerpetualMarket implements Instrument {
+  symbol: String!
+  baseAsset: String!
+  quoteAsset: String!
+  status: MarketStatus!
+  tickSize: Decimal!
+  lotSize: Decimal!
+  "Maximum leverage available, for example `20` for 20x."
+  maxLeverage: Int!
+  "Current funding rate, charged every eight hours."
+  fundingRate: Decimal!
+  "Open interest in the base asset."
+  openInterest: Decimal!
+}
+
+"Anything that can be traded on Cryptoease."
+union Market = SpotMarket | PerpetualMarket
+
+"A result from the combined search."
+union SearchResult = SpotMarket | PerpetualMarket | Order
+
+"Price and rolling 24-hour statistics for one market."
+type Ticker {
+  symbol: String!
+  "Last traded price."
+  lastPrice: Decimal!
+  "Best bid price."
+  bidPrice: Decimal!
+  "Best ask price."
+  askPrice: Decimal!
+  high24h: Decimal!
+  low24h: Decimal!
+  "Base asset volume over the last 24 hours."
+  volume24h: Decimal!
+  "Quote asset volume over the last 24 hours."
+  quoteVolume24h: Decimal!
+  "Percentage change over the last 24 hours."
+  change24hPct: Decimal!
+  timestamp: DateTime!
+}
+
+"Snapshot of the aggregated order book."
+type OrderBook {
+  symbol: String!
+  "Buy-side levels, highest price first."
+  bids: [OrderBookLevel!]!
+  "Sell-side levels, lowest price first."
+  asks: [OrderBookLevel!]!
+}
+
+"One aggregated price level of the order book."
+type OrderBookLevel {
+  price: Decimal!
+  "Total base quantity available at this price."
+  quantity: Decimal!
+  "Number of orders aggregated into the level."
+  orderCount: Int!
+}
+
+"One OHLCV candle."
+type Candle {
+  "Start of the interval."
+  openTime: DateTime!
+  open: Decimal!
+  high: Decimal!
+  low: Decimal!
+  close: Decimal!
+  "Base asset volume traded in the interval."
+  volume: Decimal!
+}
+
+"A trading account."
+type Account {
+  id: PrefixedID!
+  type: AccountType!
+  status: AccountStatus!
+  "Actions this account may perform."
+  permissions: [AccountPermission!]!
+  createdAt: DateTime!
+}
+
+"Funds held in one asset."
+type Balance {
+  asset: String!
+  "Amount free to trade or withdraw."
+  available: Decimal!
+  "Amount locked in open orders."
+  reserved: Decimal!
+  "Sum of available and reserved."
+  total: Decimal!
+}
+
+"A spot order."
+type Order {
+  id: PrefixedID!
+  "Caller-supplied identifier for reconciliation."
+  clientOrderId: String
+  market: Market!
+  side: OrderSide!
+  type: OrderType!
+  status: OrderStatus!
+  "Limit price. Absent for market orders."
+  price: Decimal
+  "Trigger price for stop-limit orders."
+  stopPrice: Decimal
+  "Ordered base quantity."
+  quantity: Decimal!
+  "Ordered quote spend, for market buys."
+  quoteQuantity: Decimal
+  "Base quantity executed so far."
+  filledQuantity: Decimal!
+  "Volume-weighted average execution price."
+  averageFillPrice: Decimal
+  timeInForce: TimeInForce!
+  "Fees charged so far, in `feeAsset`."
+  fee: Decimal!
+  feeAsset: String!
+  "Every execution against this order."
+  fills: [Fill!]!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+"One execution against an order."
+type Fill {
+  id: PrefixedID!
+  orderId: PrefixedID!
+  symbol: String!
+  side: OrderSide!
+  price: Decimal!
+  quantity: Decimal!
+  fee: Decimal!
+  feeAsset: String!
+  liquidity: Liquidity!
+  executedAt: DateTime!
+}
+
+"A page of orders."
+type OrderConnection {
+  edges: [OrderEdge!]!
+  pageInfo: PageInfo!
+  "Total orders matching the filters, ignoring pagination."
+  totalCount: Int!
+}
+
+"An order plus its pagination cursor."
+type OrderEdge {
+  node: Order!
+  cursor: String!
+}
+
+"Pagination state for cursor-based connections."
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
+"Result of placing an order."
+type PlaceOrderPayload {
+  order: Order!
+  "Non-fatal warnings, for example a price far from the last trade."
+  warnings: [String!]!
+}
+
+"A cursor-based deposit address."
+type DepositAddress {
+  asset: String!
+  network: Network!
+  address: String!
+  "Destination tag, when the network requires one."
+  memo: String
+  "Smallest deposit credited, in `asset`."
+  minimumDeposit: Decimal!
+  createdAt: DateTime!
+}
+
+"An outgoing on-chain transfer."
+type Withdrawal {
+  id: PrefixedID!
+  asset: String!
+  network: Network!
+  amount: Decimal!
+  "Network fee deducted from the amount sent."
+  fee: Decimal!
+  address: String!
+  status: WithdrawalStatus!
+  "On-chain transaction hash, once broadcast."
+  txId: String
+  createdAt: DateTime!
+}
+
+"A webhook subscription."
+type Webhook {
+  id: PrefixedID!
+  url: String!
+  events: [WebhookEvent!]!
+  "Signing secret for the `Cryptoease-Signature` header, returned only on creation."
+  secret: String
+  status: WebhookStatus!
+  createdAt: DateTime!
+}
+
+"Whether a market accepts new orders."
+enum MarketStatus {
+  "Open for trading."
+  ACTIVE
+  "Only orders that reduce exposure are accepted."
+  REDUCE_ONLY
+  "Temporarily halted, no new orders."
+  PAUSED
+  "Removed from trading."
+  DELISTED
+}
+
+"Direction of an order or fill."
+enum OrderSide {
+  BUY
+  SELL
+}
+
+"Order execution style."
+enum OrderType {
+  "Rests on the book at a fixed price."
+  LIMIT
+  "Executes immediately against resting liquidity."
+  MARKET
+  "Becomes a limit order once `stopPrice` is reached."
+  STOP_LIMIT
+}
+
+"Lifecycle state of an order."
+enum OrderStatus {
+  PENDING_NEW
+  OPEN
+  PARTIALLY_FILLED
+  FILLED
+  CANCELED
+  REJECTED
+  EXPIRED
+}
+
+"How long an order stays on the book."
+enum TimeInForce {
+  "Rests until filled or cancelled."
+  GTC
+  "Fills what it can, then cancels the rest."
+  IOC
+  "Fills completely or not at all."
+  FOK
+}
+
+"Candle width. Minutes (`MIN_`), hours (`HOUR_`), days and weeks."
+enum CandleInterval {
+  MINUTE_1
+  MINUTE_5
+  MINUTE_15
+  MINUTE_30
+  HOUR_1
+  HOUR_4
+  DAY_1
+  WEEK_1
+}
+
+"Transfer network. Availability depends on the asset."
+enum Network {
+  BITCOIN
+  ETHEREUM
+  TRON
+  SOLANA
+  POLYGON
+}
+
+"Account product."
+enum AccountType {
+  SPOT
+  MARGIN
+}
+
+"Whether an account can trade."
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+"Actions an account may perform."
+enum AccountPermission {
+  READ
+  TRADE
+  WITHDRAW
+}
+
+"State of an outgoing transfer."
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+"Event types a webhook can subscribe to."
+enum WebhookEvent {
+  ORDER_FILLED
+  ORDER_PARTIALLY_FILLED
+  ORDER_CANCELED
+  DEPOSIT_CONFIRMED
+  WITHDRAWAL_COMPLETED
+}
+
+"Whether a webhook is delivering events."
+enum WebhookStatus {
+  ENABLED
+  DISABLED
+}
+
+"Whether a fill rested on the book or crossed it."
+enum Liquidity {
+  MAKER
+  TAKER
+}
+
+"Input for placing an order."
+input PlaceOrderInput {
+  "Market to trade, for example `BTC-USDT`."
+  symbol: String!
+  side: OrderSide!
+  type: OrderType!
+  "Base quantity to buy or sell. Omit for market buys sized with `quoteQuantity`."
+  quantity: Decimal
+  "Quote amount to spend. Market buys only."
+  quoteQuantity: Decimal
+  "Limit price. Required for `LIMIT` and `STOP_LIMIT`."
+  price: Decimal
+  "Trigger price. Required for `STOP_LIMIT`."
+  stopPrice: Decimal
+  "Defaults to `GTC`."
+  timeInForce: TimeInForce! = GTC
+  "Your identifier, echoed on the order and its fills. Repeat it to make retries safe."
+  clientOrderId: String
+}
+
+"Input for sending funds off the exchange."
+input CreateWithdrawalInput {
+  asset: String!
+  network: Network!
+  "Amount to send, before the network fee."
+  amount: Decimal!
+  "Destination address on the chosen network."
+  address: String!
+  "Destination tag, when the network requires one."
+  memo: String
+}
+
+"Input for creating a webhook subscription."
+input CreateWebhookInput {
+  "HTTPS endpoint that receives deliveries."
+  url: String!
+  "Events to deliver. At least one is required."
+  events: [WebhookEvent!]!
+}
